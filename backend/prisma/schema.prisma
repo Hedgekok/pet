@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/*
+  Тип события в истории животного
+*/
+enum EventType {
+  VISIT
+  VACCINATION
+  LAB_RESULT
+  PRESCRIPTION
+  PROCEDURE
+  NOTE
+}
+
+/*
+  Откуда пришли данные
+  - CLINIC  — автоматически из МИС клиники
+  - OWNER   — добавлено владельцем/фондом вручную
+*/
+enum DataSource {
+  CLINIC
+  OWNER
+}
+
+/*
+  Животное — центральная сущность
+*/
+model Animal {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name      String?
+  species   String?
+  breed     String?
+  birthDate DateTime?
+
+  // Данные о чипе
+  microchipId          String?
+  microchipStandard    String?
+  microchipImplantedAt DateTime?
+  microchipSource      DataSource?
+
+  // Связи
+  events    MedicalEvent[]
+}
+
+/*
+  Клиника (или ветка клиник)
+*/
+model Clinic {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+
+  name        String
+  externalKey String? @unique // ID клиники в МИС
+
+  events      MedicalEvent[]
+}
+
+/*
+  Медицинское событие (универсальное)
+*/
+model MedicalEvent {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+
+  animalId   String
+  clinicId   String?
+
+  type       EventType
+  source     DataSource @default(CLINIC)
+  occurredAt DateTime
+
+  /*
+    Гибкое поле:
+    - результаты анализов
+    - схемы лечения
+    - данные вакцин
+    - назначения
+  */
+  data       Json
+
+  animal     Animal @relation(fields: [animalId], references: [id])
+  clinic     Clinic? @relation(fields: [clinicId], references: [id])
+
+  @@index([animalId, occurredAt])
+}

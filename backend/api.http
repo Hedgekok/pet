@@ -1,0 +1,38 @@
+### Health
+GET http://127.0.0.1:3000/health
+
+### Create animal
+POST http://127.0.0.1:3000/ingest/animal
+Content-Type: application/json
+
+{
+  "name": "Барсик",
+  "species": "cat",
+  "breed": "mixed",
+  "birthDate": "2022-05-01T00:00:00.000Z",
+  "microchipId": "RU-123-456-789",
+  "microchipStandard": "ISO11784/11785",
+  "microchipSource": "CLINIC"
+}
+
+### Create event (replace animalId)
+POST http://127.0.0.1:3000/ingest/event
+Content-Type: application/json
+
+{
+  "animalId": "cmk866o3g0000lafc0l451uu3",
+  "clinic": { "name": "HappyVet", "externalKey": "happyvet-001" },
+  "type": "VACCINATION",
+  "occurredAt": "2026-01-10T10:30:00.000Z",
+  "source": "CLINIC",
+  "data": {
+    "vaccine": "Rabies",
+    "batch": "RB-2026-01",
+    "nextDueAt": "2027-01-10T00:00:00.000Z",
+    "notes": "No adverse reactions"
+  }
+}
+
+### Timeline (replace id)
+GET http://127.0.0.1:3000/animals/cmk866o3g0000lafc0l451uu3/timeline
+
