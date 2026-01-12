@@ -1,3 +1,20 @@
+@animalId = cmk866o3g0000lafc0l451uu3
+
+### Auth ping (no token)
+GET http://127.0.0.1:3000/auth/ping
+
+### Get dev token
+POST http://127.0.0.1:3000/auth/dev-token
+Content-Type: application/json
+
+{
+  "phone": "+79990001122"
+}
+
+### Auth ping (with token manual)
+GET http://127.0.0.1:3000/auth/ping
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXYtdXNlciIsInBob25lRTE2NCI6Iis3OTk5MDAwMTEyMiIsImlhdCI6MTc2ODI0MDA5OH0.VU0d34jlFeo1XL0jFTq-pJXUdXXCXHUaU1kKi8G5sCw
+
 ### Health
 GET http://127.0.0.1:3000/health
 
@@ -34,5 +51,40 @@ Content-Type: application/json
 }
 
 ### Timeline (replace id)
-GET http://127.0.0.1:3000/animals/cmk866o3g0000lafc0l451uu3/timeline
+GET http://127.0.0.1:3000/animals/{{animalId}}/timeline
 
+### Start OTP
+POST http://127.0.0.1:3000/auth/start
+Content-Type: application/json
+
+{
+  "phone": "89990001122"
+}
+
+### Verify OTP
+POST http://127.0.0.1:3000/auth/verify
+Content-Type: application/json
+
+{
+  "phone": "89990001122",
+  "code": "123456"
+}
+
+### Create animal linked to owner phone
+POST http://127.0.0.1:3000/ingest/animal
+Content-Type: application/json
+
+{
+  "name": "Барсик",
+  "species": "cat",
+  "breed": "mixed",
+  "birthDate": "2022-05-01T00:00:00.000Z",
+  "microchipId": "RU-123-456-789",
+  "microchipStandard": "ISO11784/11785",
+  "microchipSource": "CLINIC",
+  "ownerPhone": "89990001122"
+}
+
+### My animals (вставь token из auth/verify)
+GET http://127.0.0.1:3000/me/animals
+Authorization: Bearer ВСТАВЬ_ТОКЕН_СЮДА

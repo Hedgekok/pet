@@ -1,39 +1,77 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
-import { prisma } from './db.js';
+import { PrismaClient } from '@prisma/client';
+import jwt from '@fastify/jwt';
+import cookie from '@fastify/cookie';
 
+function normalizePhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+
+  if (digits.startsWith('8')) return '+7' + digits.slice(1);
+  if (digits.startsWith('7')) return '+' + digits;
+  if (digits.startsWith('9')) return '+7' + digits;
+
+  throw new Error('Invalid phone number');
+}
+
+type OtpRecord = { code: string; expiresAt: number };
+const otpStore = new Map<string, OtpRecord>();
+
+const prisma = new PrismaClient();
 const app = Fastify({ logger: true });
+
+app.register(cookie);
+app.register(jwt, { secret: process.env.JWT_SECRET! });
+
+async function requireAuth(req: any, reply: any) {
+  try {
+    await req.jwtVerify();
+  } catch {
+    return reply.code(401).send({ error: 'Unauthorized' });
+  }
+}
+
+
+app.get('/me/animals', { preHandler: requireAuth }, async (req: any) => {
+  const userId = req.user.sub as string;
+
+  const animals = await prisma.animal.findMany({
+    where: { ownerUserId: userId },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return { animals };
+});
+
 
 app.get('/health', async () => ({ ok: true }));
 
-app.get('/animals/:id/timeline', async (req, reply) => {
-  const { id } = req.params as { id: string };
-
-  const animal = await prisma.animal.findUnique({ where: { id } });
-  if (!animal) return reply.code(404).send({ error: 'Animal not found' });
-
-  const events = await prisma.medicalEvent.findMany({
-    where: { animalId: id },
-    orderBy: { occurredAt: 'desc' },
-  });
-
-  return { animal, events };
-});
-
 app.post('/ingest/animal', async (req) => {
   const body = req.body as {
+    ownerPhone?: string;
     name?: string;
     species?: string;
     breed?: string;
-    birthDate?: string; // ISO
+    birthDate?: string;
     microchipId?: string;
     microchipStandard?: string;
-    microchipImplantedAt?: string; // ISO
+    microchipImplantedAt?: string;
     microchipSource?: 'CLINIC' | 'OWNER';
   };
+let ownerUserId: string | undefined = undefined;
+
+if (body.ownerPhone) {
+  const user = await prisma.user.upsert({
+    where: { phoneE164 },
+    update: {},
+    create: { phoneE164 },
+  });
+  ownerUserId = user.id;
+}
 
   const animal = await prisma.animal.create({
     data: {
+      ownerUserId,
       name: body.name,
       species: body.species,
       breed: body.breed,
@@ -53,9 +91,9 @@ app.post('/ingest/event', async (req, reply) => {
     animalId: string;
     clinic?: { name: string; externalKey?: string };
     type: 'VISIT' | 'VACCINATION' | 'LAB_RESULT' | 'PRESCRIPTION' | 'PROCEDURE' | 'NOTE';
-    occurredAt: string; // ISO
+    occurredAt: string;
     source?: 'CLINIC' | 'OWNER';
-    data: unknown; // JSON
+    data: unknown;
   };
 
   const animal = await prisma.animal.findUnique({ where: { id: body.animalId } });
@@ -89,7 +127,60 @@ app.post('/ingest/event', async (req, reply) => {
   return { event };
 });
 
+app.get('/animals/:id/timeline', async (req, reply) => {
+  const { id } = req.params as { id: string };
+
+  const animal = await prisma.animal.findUnique({ where: { id } });
+  if (!animal) return reply.code(404).send({ error: 'Animal not found' });
+
+  const events = await prisma.medicalEvent.findMany({
+    where: { animalId: id },
+    orderBy: { occurredAt: 'desc' },
+  });
+
+  return { animal, events };
+});
+
 const port = Number(process.env.PORT ?? 3000);
+
+app.post('/auth/start', async (req, reply) => {
+  const body = req.body as { phone: string };
+
+  const phoneE164 = normalizePhone(body.phone);
+
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = Date.now() + 5 * 60 * 1000;
+
+  otpStore.set(phoneE164, { code, expiresAt });
+
+  req.log.info({ phoneE164, code }, 'DEV OTP issued');
+
+  return { ok: true };
+});
+
+
+app.post('/auth/verify', async (req, reply) => {
+  const body = req.body as { phone: string; code: string };
+
+  const phoneE164 = normalizePhone(body.phone);
+
+  const rec = otpStore.get(phoneE164);
+  if (!rec) return reply.code(400).send({ error: 'No OTP requested' });
+  if (Date.now() > rec.expiresAt) return reply.code(400).send({ error: 'OTP expired' });
+  if (body.code !== rec.code) return reply.code(400).send({ error: 'Invalid code' });
+
+  otpStore.delete(phoneE164);
+
+  const user = await prisma.user.upsert({
+    where: { phoneE164 },
+    update: {},
+    create: { phoneE164 },
+  });
+
+  const token = await reply.jwtSign({ sub: user.id, phoneE164 });
+
+  return reply.send({ token, user: { id: user.id, phoneE164 } });
+});
 
 app.listen({ port, host: '0.0.0.0' }).catch((err) => {
   app.log.error(err);
