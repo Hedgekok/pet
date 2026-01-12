@@ -32,10 +32,23 @@ enum DataSource {
 /*
   Животное — центральная сущность
 */
+  model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  phoneE164 String   @unique
+  animals   Animal[]
+
+  @@index([phoneE164])
+}
 model Animal {
   id        String   @id @default(cuid())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  ownerUserId String?
+  owner       User? @relation(fields: [ownerUserId], references: [id])
 
   name      String?
   species   String?
