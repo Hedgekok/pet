@@ -5,6 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "e2e:migrate": "dotenv -e .env.e2e -- npx prisma migrate deploy",
+    "e2e": "npm run e2e:migrate && dotenv -e .env.e2e -- tsx scripts/e2e-checklist.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier -w ."
@@ -20,6 +22,7 @@
     "@types/node": "^25.0.3",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
+    "dotenv-cli": "^7.4.2",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import": "^2.32.0",

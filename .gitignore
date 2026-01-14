@@ -3,3 +3,4 @@ backend/node_modules/
 dist/
 backend/dist/
 .env
+.env.e2e
