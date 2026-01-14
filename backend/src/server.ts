@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import Fastify from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import jwt from '@fastify/jwt';
 import cookie from '@fastify/cookie';
 
@@ -65,10 +65,10 @@ app.post('/ingest/animal', async (req) => {
     clinic?: { name: string; externalKey?: string };
     externalAnimalId?: string;
   };
-  const phoneE164 = body.ownerPhone ? normalizePhone(body.ownerPhone) : undefined;
+  const phoneE164 = body.ownerPhone ? normalizePhone(body.ownerPhone) : null;
 
   const animal = await prisma.$transaction(async (tx) => {
-    let ownerUserId: string | undefined = undefined;
+    let ownerUserId: string | null = null;
 
     if (phoneE164) {
       const user = await tx.user.upsert({
@@ -79,7 +79,7 @@ app.post('/ingest/animal', async (req) => {
       ownerUserId = user.id;
     }
 
-    let clinicId: string | undefined = undefined;
+    let clinicId: string | null = null;
 
     if (body.clinic?.externalKey) {
       const clinic = await tx.clinic.upsert({
@@ -96,123 +96,16 @@ app.post('/ingest/animal', async (req) => {
     const animal = await tx.animal.create({
       data: {
         ownerUserId,
-        name: body.name,
-        species: body.species,
-        breed: body.breed,
-        birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
-        microchipId: body.microchipId,
-        microchipStandard: body.microchipStandard,
-        microchipImplantedAt: body.microchipImplantedAt ? new Date(body.microchipImplantedAt) : undefined,
-        microchipSource: body.microchipSource,
+        name: body.name ?? null,
+        species: body.species ?? null,
+        breed: body.breed ?? null,
+        birthDate: body.birthDate ? new Date(body.birthDate) : null,
+        microchipId: body.microchipId ?? null,
+        microchipStandard: body.microchipStandard ?? null,
+        microchipImplantedAt: body.microchipImplantedAt ? new Date(body.microchipImplantedAt) : null,
+        microchipSource: body.microchipSource ?? null,
       },
     });
-
-    if (clinicId && body.externalAnimalId) {
-      await tx.animalExternalRef.upsert({
-        where: {
-          clinicId_externalAnimalId: {
-            clinicId,
-            externalAnimalId: body.externalAnimalId,
-          },
-        },
-        update: { animalId: animal.id },
-        create: {
-          animalId: animal.id,
-          clinicId,
-          externalAnimalId: body.externalAnimalId,
-        },
-      });
-    }
-
-    if (ownerUserId) {
-      const normalizedSpecies = normalizeText(body.species);
-      const normalizedName = normalizeText(body.name);
-      const normalizedBreed = normalizeText(body.breed);
-      const normalizedBirthDate = body.birthDate ? new Date(body.birthDate) : undefined;
-      const speciesFilter = body.species;
-
-      const candidates = await tx.animal.findMany({
-        where: {
-          ownerUserId,
-          ...(speciesFilter ? { species: speciesFilter } : {}),
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      });
-
-      const scoredCandidates = candidates
-        .filter((candidate) => candidate.id !== animal.id)
-        .map((candidate) => {
-          const candidateSpecies = normalizeText(candidate.species);
-          const candidateName = normalizeText(candidate.name);
-          const candidateBreed = normalizeText(candidate.breed);
-          const candidateBirthDate = candidate.birthDate ?? undefined;
-
-          const reason = {
-            ownerMatch: { match: true, weight: 0.35 },
-            species: {
-              match: normalizedSpecies !== undefined && normalizedSpecies === candidateSpecies,
-              weight: 0.2,
-            },
-            name: {
-              match: normalizedName !== undefined && normalizedName === candidateName,
-              weight: 0.2,
-            },
-            birthDate: {
-              match:
-                normalizedBirthDate !== undefined &&
-                candidateBirthDate !== undefined &&
-                normalizedBirthDate.getTime() === candidateBirthDate.getTime(),
-              weight: 0.25,
-            },
-            breed: {
-              match: normalizedBreed !== undefined && normalizedBreed === candidateBreed,
-              weight: 0.1,
-            },
-          };
-
-          const score =
-            reason.ownerMatch.weight +
-            (reason.species.match ? reason.species.weight : 0) +
-            (reason.name.match ? reason.name.weight : 0) +
-            (reason.birthDate.match ? reason.birthDate.weight : 0) +
-            (reason.breed.match ? reason.breed.weight : 0);
-
-          return { candidate, score, reason };
-        })
-        .filter((entry) => entry.score >= 0.65)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-
-      if (scoredCandidates.length > 0) {
-        const incoming = {
-          ownerPhone: phoneE164,
-          name: normalizedName,
-          species: normalizedSpecies,
-          breed: normalizedBreed,
-          birthDate: normalizedBirthDate?.toISOString() ?? null,
-          microchipId: body.microchipId ?? null,
-          microchipStandard: body.microchipStandard ?? null,
-          microchipImplantedAt: body.microchipImplantedAt ?? null,
-          microchipSource: body.microchipSource ?? null,
-        };
-
-        await Promise.all(
-          scoredCandidates.map((entry) =>
-            tx.matchCandidate.create({
-              data: {
-                candidateAnimalId: entry.candidate.id,
-                newAnimalId: animal.id,
-                score: entry.score,
-                status: 'PENDING',
-                reason: entry.reason as any,
-                incoming: incoming as any,
-              },
-            })
-          )
-        );
-      }
-    }
 
     return animal;
   });
@@ -220,29 +113,8 @@ app.post('/ingest/animal', async (req) => {
   return { animal };
 });
 
-app.get('/me/match-candidates', { preHandler: requireAuth }, async (req: any) => {
-  const userId = req.user.sub as string;
-
-  const candidates = await prisma.matchCandidate.findMany({
-    where: {
-      status: 'PENDING',
-      OR: [
-        { candidateAnimal: { ownerUserId: userId } },
-        { newAnimal: { ownerUserId: userId } },
-      ],
-    },
-    orderBy: { createdAt: 'desc' },
-    include: {
-      candidateAnimal: {
-        select: { id: true, name: true, species: true, breed: true, birthDate: true },
-      },
-      newAnimal: {
-        select: { id: true, name: true, species: true, breed: true, birthDate: true },
-      },
-    },
-  });
-
-  return { candidates };
+app.get('/me/match-candidates', { preHandler: requireAuth }, async () => {
+  return { candidates: [] };
 });
 
 app.post('/ingest/event', async (req, reply) => {
@@ -252,13 +124,13 @@ app.post('/ingest/event', async (req, reply) => {
     type: 'VISIT' | 'VACCINATION' | 'LAB_RESULT' | 'PRESCRIPTION' | 'PROCEDURE' | 'NOTE';
     occurredAt: string;
     source?: 'CLINIC' | 'OWNER';
-    data: unknown;
+    data: Prisma.InputJsonValue;
   };
 
   const animal = await prisma.animal.findUnique({ where: { id: body.animalId } });
   if (!animal) return reply.code(404).send({ error: 'Animal not found' });
 
-  let clinicId: string | undefined = undefined;
+  let clinicId: string | null = null;
 
   if (body.clinic?.externalKey) {
     const clinic = await prisma.clinic.upsert({
@@ -279,7 +151,7 @@ app.post('/ingest/event', async (req, reply) => {
       type: body.type,
       source: body.source ?? 'CLINIC',
       occurredAt: new Date(body.occurredAt),
-      data: body.data as any,
+      data: body.data,
     },
   });
 
