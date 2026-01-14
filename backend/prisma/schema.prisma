@@ -29,6 +29,12 @@ enum DataSource {
   OWNER
 }
 
+enum MatchStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
 /*
   Животное — центральная сущность
 */
@@ -63,6 +69,10 @@ model Animal {
 
   // Связи
   events    MedicalEvent[]
+
+  externalRefs             AnimalExternalRef[]
+  matchCandidatesExisting  MatchCandidate[] @relation("MatchCandidateExisting")
+  matchCandidatesIncoming  MatchCandidate[] @relation("MatchCandidateIncoming")
 }
 
 /*
@@ -76,6 +86,7 @@ model Clinic {
   externalKey String? @unique // ID клиники в МИС
 
   events      MedicalEvent[]
+  externalRefs AnimalExternalRef[]
 }
 
 /*
@@ -105,4 +116,34 @@ model MedicalEvent {
   clinic     Clinic? @relation(fields: [clinicId], references: [id])
 
   @@index([animalId, occurredAt])
+}
+
+model AnimalExternalRef {
+  id               String   @id @default(cuid())
+  createdAt        DateTime @default(now())
+
+  animalId         String
+  clinicId         String
+  externalAnimalId String
+
+  animal           Animal @relation(fields: [animalId], references: [id])
+  clinic           Clinic @relation(fields: [clinicId], references: [id])
+
+  @@unique([clinicId, externalAnimalId])
+}
+
+model MatchCandidate {
+  id                String      @id @default(cuid())
+  createdAt         DateTime    @default(now())
+
+  candidateAnimalId String
+  newAnimalId       String
+
+  score             Float
+  status            MatchStatus @default(PENDING)
+  reason            Json
+  incoming          Json
+
+  candidateAnimal   Animal @relation("MatchCandidateExisting", fields: [candidateAnimalId], references: [id])
+  newAnimal         Animal @relation("MatchCandidateIncoming", fields: [newAnimalId], references: [id])
 }
