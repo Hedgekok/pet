@@ -1,29 +1,37 @@
-@animalId = cmk866o3g0000lafc0l451uu3
+@baseUrl = http://127.0.0.1:3000
+@token = REPLACE_ME
+@animalId = REPLACE_ME
 
-### Auth ping (no token)
-GET http://127.0.0.1:3000/auth/ping
+### Health check
+GET {{baseUrl}}/health
 
-### Get dev token
-POST http://127.0.0.1:3000/auth/dev-token
+### OTP start (DEV: check server logs for code)
+POST {{baseUrl}}/auth/start
 Content-Type: application/json
 
 {
-  "phone": "+79990001122"
+  "phone": "89990001122"
 }
 
-### Auth ping (with token manual)
-GET http://127.0.0.1:3000/auth/ping
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZXYtdXNlciIsInBob25lRTE2NCI6Iis3OTk5MDAwMTEyMiIsImlhdCI6MTc2ODI0MDA5OH0.VU0d34jlFeo1XL0jFTq-pJXUdXXCXHUaU1kKi8G5sCw
-
-### Health
-GET http://127.0.0.1:3000/health
-
-### Create animal
-POST http://127.0.0.1:3000/ingest/animal
+### OTP verify (replace code from server logs)
+POST {{baseUrl}}/auth/verify
 Content-Type: application/json
 
 {
-  "name": "Барсик",
+  "phone": "89990001122",
+  "code": "REPLACE_ME"
+}
+
+### My animals (JWT protected)
+GET {{baseUrl}}/me/animals
+Authorization: Bearer {{token}}
+
+### Ingest animal (basic, no owner)
+POST {{baseUrl}}/ingest/animal
+Content-Type: application/json
+
+{
+  "name": "Barsik",
   "species": "cat",
   "breed": "mixed",
   "birthDate": "2022-05-01T00:00:00.000Z",
@@ -32,12 +40,27 @@ Content-Type: application/json
   "microchipSource": "CLINIC"
 }
 
-### Create event (replace animalId)
-POST http://127.0.0.1:3000/ingest/event
+### Ingest animal linked to owner phone
+POST {{baseUrl}}/ingest/animal
 Content-Type: application/json
 
 {
-  "animalId": "cmk866o3g0000lafc0l451uu3",
+  "name": "Barsik",
+  "species": "cat",
+  "breed": "mixed",
+  "birthDate": "2022-05-01T00:00:00.000Z",
+  "microchipId": "RU-123-456-789",
+  "microchipStandard": "ISO11784/11785",
+  "microchipSource": "CLINIC",
+  "ownerPhone": "89990001122"
+}
+
+### Ingest event (uses {{animalId}})
+POST {{baseUrl}}/ingest/event
+Content-Type: application/json
+
+{
+  "animalId": "{{animalId}}",
   "clinic": { "name": "HappyVet", "externalKey": "happyvet-001" },
   "type": "VACCINATION",
   "occurredAt": "2026-01-10T10:30:00.000Z",
@@ -50,41 +73,48 @@ Content-Type: application/json
   }
 }
 
-### Timeline (replace id)
-GET http://127.0.0.1:3000/animals/{{animalId}}/timeline
+### Timeline (uses {{animalId}})
+GET {{baseUrl}}/animals/{{animalId}}/timeline
 
-### Start OTP
-POST http://127.0.0.1:3000/auth/start
+### Match-candidate scenario: ingest animal A (owner phone + clinic refs)
+POST {{baseUrl}}/ingest/animal
 Content-Type: application/json
 
 {
-  "phone": "89990001122"
-}
-
-### Verify OTP
-POST http://127.0.0.1:3000/auth/verify
-Content-Type: application/json
-
-{
-  "phone": "89990001122",
-  "code": "123456"
-}
-
-### Create animal linked to owner phone
-POST http://127.0.0.1:3000/ingest/animal
-Content-Type: application/json
-
-{
-  "name": "Барсик",
+  "ownerPhone": "89990001122",
+  "name": "Barsik",
   "species": "cat",
   "breed": "mixed",
   "birthDate": "2022-05-01T00:00:00.000Z",
-  "microchipId": "RU-123-456-789",
-  "microchipStandard": "ISO11784/11785",
-  "microchipSource": "CLINIC",
-  "ownerPhone": "89990001122"
+  "clinic": { "name": "HappyVet", "externalKey": "happyvet-001" },
+  "externalAnimalId": "HV-1001"
 }
 
-### My animals (вставь token из auth/verify)
-GET http://127.0.0.1:3000/me/animals
-Authorization: Bearer ВСТАВЬ_ТОКЕН_СЮДА
+### Match-candidate scenario: ingest animal B (similar fields, different externalAnimalId)
+POST {{baseUrl}}/ingest/animal
+Content-Type: application/json
+
+{
+  "ownerPhone": "89990001122",
+  "name": "Barsik",
+  "species": "cat",
+  "breed": "mixed",
+  "birthDate": "2022-05-01T00:00:00.000Z",
+  "clinic": { "name": "HappyVet", "externalKey": "happyvet-001" },
+  "externalAnimalId": "HV-1002"
+}
+
+### Match candidates (JWT protected)
+GET {{baseUrl}}/me/match-candidates
+Authorization: Bearer {{token}}
+
+### DEV ONLY: dev-token (do not use in main flow)
+POST {{baseUrl}}/auth/dev-token
+Content-Type: application/json
+
+{
+  "phone": "+79990001122"
+}
+
+### DEV ONLY: auth ping
+GET {{baseUrl}}/auth/ping

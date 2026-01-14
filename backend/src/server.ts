@@ -14,6 +14,11 @@ function normalizePhone(phone: string): string {
   throw new Error('Invalid phone number');
 }
 
+function normalizeText(value?: string | null): string | undefined {
+  if (!value) return undefined;
+  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 type OtpRecord = { code: string; expiresAt: number };
 const otpStore = new Map<string, OtpRecord>();
 
@@ -57,33 +62,187 @@ app.post('/ingest/animal', async (req) => {
     microchipStandard?: string;
     microchipImplantedAt?: string;
     microchipSource?: 'CLINIC' | 'OWNER';
+    clinic?: { name: string; externalKey?: string };
+    externalAnimalId?: string;
   };
-let ownerUserId: string | undefined = undefined;
+  const phoneE164 = body.ownerPhone ? normalizePhone(body.ownerPhone) : undefined;
 
-if (body.ownerPhone) {
-  const user = await prisma.user.upsert({
-    where: { phoneE164 },
-    update: {},
-    create: { phoneE164 },
-  });
-  ownerUserId = user.id;
-}
+  const animal = await prisma.$transaction(async (tx) => {
+    let ownerUserId: string | undefined = undefined;
 
-  const animal = await prisma.animal.create({
-    data: {
-      ownerUserId,
-      name: body.name,
-      species: body.species,
-      breed: body.breed,
-      birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
-      microchipId: body.microchipId,
-      microchipStandard: body.microchipStandard,
-      microchipImplantedAt: body.microchipImplantedAt ? new Date(body.microchipImplantedAt) : undefined,
-      microchipSource: body.microchipSource,
-    },
+    if (phoneE164) {
+      const user = await tx.user.upsert({
+        where: { phoneE164 },
+        update: {},
+        create: { phoneE164 },
+      });
+      ownerUserId = user.id;
+    }
+
+    let clinicId: string | undefined = undefined;
+
+    if (body.clinic?.externalKey) {
+      const clinic = await tx.clinic.upsert({
+        where: { externalKey: body.clinic.externalKey },
+        update: { name: body.clinic.name },
+        create: { name: body.clinic.name, externalKey: body.clinic.externalKey },
+      });
+      clinicId = clinic.id;
+    } else if (body.clinic?.name) {
+      const clinic = await tx.clinic.create({ data: { name: body.clinic.name } });
+      clinicId = clinic.id;
+    }
+
+    const animal = await tx.animal.create({
+      data: {
+        ownerUserId,
+        name: body.name,
+        species: body.species,
+        breed: body.breed,
+        birthDate: body.birthDate ? new Date(body.birthDate) : undefined,
+        microchipId: body.microchipId,
+        microchipStandard: body.microchipStandard,
+        microchipImplantedAt: body.microchipImplantedAt ? new Date(body.microchipImplantedAt) : undefined,
+        microchipSource: body.microchipSource,
+      },
+    });
+
+    if (clinicId && body.externalAnimalId) {
+      await tx.animalExternalRef.upsert({
+        where: {
+          clinicId_externalAnimalId: {
+            clinicId,
+            externalAnimalId: body.externalAnimalId,
+          },
+        },
+        update: { animalId: animal.id },
+        create: {
+          animalId: animal.id,
+          clinicId,
+          externalAnimalId: body.externalAnimalId,
+        },
+      });
+    }
+
+    if (ownerUserId) {
+      const normalizedSpecies = normalizeText(body.species);
+      const normalizedName = normalizeText(body.name);
+      const normalizedBreed = normalizeText(body.breed);
+      const normalizedBirthDate = body.birthDate ? new Date(body.birthDate) : undefined;
+      const speciesFilter = body.species;
+
+      const candidates = await tx.animal.findMany({
+        where: {
+          ownerUserId,
+          ...(speciesFilter ? { species: speciesFilter } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      const scoredCandidates = candidates
+        .filter((candidate) => candidate.id !== animal.id)
+        .map((candidate) => {
+          const candidateSpecies = normalizeText(candidate.species);
+          const candidateName = normalizeText(candidate.name);
+          const candidateBreed = normalizeText(candidate.breed);
+          const candidateBirthDate = candidate.birthDate ?? undefined;
+
+          const reason = {
+            ownerMatch: { match: true, weight: 0.35 },
+            species: {
+              match: normalizedSpecies !== undefined && normalizedSpecies === candidateSpecies,
+              weight: 0.2,
+            },
+            name: {
+              match: normalizedName !== undefined && normalizedName === candidateName,
+              weight: 0.2,
+            },
+            birthDate: {
+              match:
+                normalizedBirthDate !== undefined &&
+                candidateBirthDate !== undefined &&
+                normalizedBirthDate.getTime() === candidateBirthDate.getTime(),
+              weight: 0.25,
+            },
+            breed: {
+              match: normalizedBreed !== undefined && normalizedBreed === candidateBreed,
+              weight: 0.1,
+            },
+          };
+
+          const score =
+            reason.ownerMatch.weight +
+            (reason.species.match ? reason.species.weight : 0) +
+            (reason.name.match ? reason.name.weight : 0) +
+            (reason.birthDate.match ? reason.birthDate.weight : 0) +
+            (reason.breed.match ? reason.breed.weight : 0);
+
+          return { candidate, score, reason };
+        })
+        .filter((entry) => entry.score >= 0.65)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+
+      if (scoredCandidates.length > 0) {
+        const incoming = {
+          ownerPhone: phoneE164,
+          name: normalizedName,
+          species: normalizedSpecies,
+          breed: normalizedBreed,
+          birthDate: normalizedBirthDate?.toISOString() ?? null,
+          microchipId: body.microchipId ?? null,
+          microchipStandard: body.microchipStandard ?? null,
+          microchipImplantedAt: body.microchipImplantedAt ?? null,
+          microchipSource: body.microchipSource ?? null,
+        };
+
+        await Promise.all(
+          scoredCandidates.map((entry) =>
+            tx.matchCandidate.create({
+              data: {
+                candidateAnimalId: entry.candidate.id,
+                newAnimalId: animal.id,
+                score: entry.score,
+                status: 'PENDING',
+                reason: entry.reason as any,
+                incoming: incoming as any,
+              },
+            })
+          )
+        );
+      }
+    }
+
+    return animal;
   });
 
   return { animal };
+});
+
+app.get('/me/match-candidates', { preHandler: requireAuth }, async (req: any) => {
+  const userId = req.user.sub as string;
+
+  const candidates = await prisma.matchCandidate.findMany({
+    where: {
+      status: 'PENDING',
+      OR: [
+        { candidateAnimal: { ownerUserId: userId } },
+        { newAnimal: { ownerUserId: userId } },
+      ],
+    },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      candidateAnimal: {
+        select: { id: true, name: true, species: true, breed: true, birthDate: true },
+      },
+      newAnimal: {
+        select: { id: true, name: true, species: true, breed: true, birthDate: true },
+      },
+    },
+  });
+
+  return { candidates };
 });
 
 app.post('/ingest/event', async (req, reply) => {

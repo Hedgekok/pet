@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "Continue.continue",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "Prisma.prisma",
+    "humao.rest-client",
+    "christian-kohler.path-intellisense",
+    "eamodio.gitlens"
+  ]
+}
