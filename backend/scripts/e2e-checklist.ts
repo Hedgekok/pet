@@ -83,11 +83,13 @@ async function main() {
     animalAId: string;
     orphanAnimalId: string;
     eventId: string;
+    matchCandidateIds: string[];
   } = {
     token: '',
     animalAId: '',
     orphanAnimalId: '',
     eventId: '',
+    matchCandidateIds: [],
   };
 
   const runStep = async (name: string, fn: () => Promise<void>) => {
@@ -190,13 +192,60 @@ async function main() {
       const candidatesValue = getField(res.json, 'candidates');
       if (!isArray(candidatesValue)) throw new Error('Expected candidates array.');
 
-      const hasPending = candidatesValue.some((item) => {
-        if (!isObject(item)) return false;
-        const statusValue = getField(item, 'status');
-        return isString(statusValue) && statusValue === 'PENDING';
-      });
+      const pendingIds = candidatesValue
+        .map((item) => {
+          if (!isObject(item)) return '';
+          const statusValue = getField(item, 'status');
+          const idValue = getField(item, 'id');
+          if (!isString(statusValue) || statusValue !== 'PENDING') return '';
+          return isString(idValue) ? idValue : '';
+        })
+        .filter((id) => id.length > 0);
 
-      if (!hasPending) throw new Error('No PENDING match candidates found.');
+      if (pendingIds.length === 0) throw new Error('No PENDING match candidates found.');
+      state.matchCandidateIds = pendingIds;
+    });
+
+    await runStep('Confirm match candidate', async () => {
+      const candidateId = state.matchCandidateIds[0];
+      const res = await requestJson(`${baseUrl}/me/match-candidates/${candidateId}/confirm`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${state.token}` },
+      });
+      if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
+      if (!isObject(res.json ?? undefined)) throw new Error('Expected JSON object.');
+      const candidateValue = getField(res.json, 'candidate');
+      if (!isObject(candidateValue)) throw new Error('Expected candidate object.');
+      const statusValue = getField(candidateValue, 'status');
+      if (!isString(statusValue) || statusValue !== 'CONFIRMED') {
+        throw new Error('Expected status CONFIRMED.');
+      }
+    });
+
+    await runStep('Confirm match candidate conflict', async () => {
+      const candidateId = state.matchCandidateIds[0];
+      const res = await requestJson(`${baseUrl}/me/match-candidates/${candidateId}/confirm`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${state.token}` },
+      });
+      if (res.status !== 409) throw new Error(`Expected 409, got ${res.status}`);
+    });
+
+    await runStep('Reject match candidate (optional)', async () => {
+      if (state.matchCandidateIds.length < 2) return;
+      const candidateId = state.matchCandidateIds[1];
+      const res = await requestJson(`${baseUrl}/me/match-candidates/${candidateId}/reject`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${state.token}` },
+      });
+      if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
+      if (!isObject(res.json ?? undefined)) throw new Error('Expected JSON object.');
+      const candidateValue = getField(res.json, 'candidate');
+      if (!isObject(candidateValue)) throw new Error('Expected candidate object.');
+      const statusValue = getField(candidateValue, 'status');
+      if (!isString(statusValue) || statusValue !== 'REJECTED') {
+        throw new Error('Expected status REJECTED.');
+      }
     });
 
     await runStep('Ingest orphan animal', async () => {

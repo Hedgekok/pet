@@ -1,6 +1,8 @@
+# Set these manually before running requests.
 @baseUrl = http://127.0.0.1:3000
-@token = REPLACE_ME
-@animalId = REPLACE_ME
+@token = REPLACE_ME # JWT token from /auth/verify or /auth/dev-token
+@candidateId = REPLACE_ME # MatchCandidate id from /me/match-candidates
+@animalId = REPLACE_ME # Animal id from ingest responses
 
 ### Health check
 GET {{baseUrl}}/health
@@ -79,6 +81,14 @@ GET {{baseUrl}}/animals/{{animalId}}/timeline
 ### Match-candidate scenario: ingest animal A (owner phone + clinic refs)
 POST {{baseUrl}}/ingest/animal
 Content-Type: application/json
+
+### Confirm match candidate
+POST {{baseUrl}}/me/match-candidates/{{candidateId}}/confirm
+Authorization: Bearer {{token}}
+
+### Reject match candidate
+POST {{baseUrl}}/me/match-candidates/{{candidateId}}/reject
+Authorization: Bearer {{token}}
 
 {
   "ownerPhone": "89990001122",

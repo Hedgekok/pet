@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { Prisma, PrismaClient } from '@prisma/client';
 import jwt from '@fastify/jwt';
 import cookie from '@fastify/cookie';
@@ -52,7 +52,7 @@ export function buildApp() {
     await prisma.$disconnect();
   });
 
-  async function requireAuth(req: any, reply: any) {
+  async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     try {
       await req.jwtVerify();
     } catch {
@@ -242,7 +242,7 @@ export function buildApp() {
     return { animal };
   });
 
-  app.get('/me/match-candidates', { preHandler: requireAuth }, async (req: any) => {
+  app.get('/me/match-candidates', { preHandler: requireAuth }, async (req: FastifyRequest) => {
     const userId = req.user.sub as string;
 
     const candidates = await prisma.matchCandidate.findMany({
@@ -266,6 +266,83 @@ export function buildApp() {
 
     return { candidates };
   });
+
+  async function resolveCandidate(
+    userId: string,
+    candidateId: string,
+    action: 'CONFIRM' | 'REJECT'
+  ) {
+    return prisma.$transaction(async (tx) => {
+      const candidate = await tx.matchCandidate.findUnique({
+        where: { id: candidateId },
+        select: { id: true, status: true, candidateAnimalId: true, newAnimalId: true },
+      });
+
+      if (!candidate) {
+        return { error: 'NOT_FOUND' as const };
+      }
+
+      if (candidate.status !== 'PENDING') {
+        return { error: 'NOT_PENDING' as const };
+      }
+
+      const owned = await tx.animal.count({
+        where: {
+          id: { in: [candidate.candidateAnimalId, candidate.newAnimalId] },
+          ownerUserId: userId,
+        },
+      });
+
+      if (owned === 0) {
+        return { error: 'FORBIDDEN' as const };
+      }
+
+      const updated = await tx.matchCandidate.update({
+        where: { id: candidateId },
+        data: { status: action === 'CONFIRM' ? 'CONFIRMED' : 'REJECTED' },
+      });
+
+      return { updated };
+    });
+  }
+
+  app.post(
+    '/me/match-candidates/:id/confirm',
+    { preHandler: requireAuth },
+    async (req: any, reply: any) => {
+      const userId = req.user.sub as string;
+      const { id } = req.params as { id: string };
+
+      const res = await resolveCandidate(userId, id, 'CONFIRM');
+
+      if ('error' in res) {
+        if (res.error === 'NOT_FOUND') return reply.code(404).send({ error: 'MatchCandidate not found' });
+        if (res.error === 'NOT_PENDING') return reply.code(409).send({ error: 'MatchCandidate is not PENDING' });
+        if (res.error === 'FORBIDDEN') return reply.code(403).send({ error: 'Forbidden' });
+      }
+
+      return { candidate: res.updated };
+    }
+  );
+
+  app.post(
+    '/me/match-candidates/:id/reject',
+    { preHandler: requireAuth },
+    async (req: any, reply: any) => {
+      const userId = req.user.sub as string;
+      const { id } = req.params as { id: string };
+
+      const res = await resolveCandidate(userId, id, 'REJECT');
+
+      if ('error' in res) {
+        if (res.error === 'NOT_FOUND') return reply.code(404).send({ error: 'MatchCandidate not found' });
+        if (res.error === 'NOT_PENDING') return reply.code(409).send({ error: 'MatchCandidate is not PENDING' });
+        if (res.error === 'FORBIDDEN') return reply.code(403).send({ error: 'Forbidden' });
+      }
+
+      return { candidate: res.updated };
+    }
+  );
 
   app.post('/ingest/event', async (req, reply) => {
     const body = req.body as {
